@@ -1,0 +1,9 @@
+node_modules
+.env
+*.pem
+keys/
+
+# Google Cloud service account keys (never commit stray JSON in server/)
+techfest-dev-6436a3acbc5f.json
+package-lock.json
+
