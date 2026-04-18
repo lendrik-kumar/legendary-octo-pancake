@@ -68,9 +68,33 @@ const FORM_ACCESS_KEY = (process.env.FORM_ACCESS_KEY || '').trim()
 const SESSION_SECRET = (process.env.SESSION_SECRET || '').trim()
 const SPREADSHEET_ID = (process.env.SPREADSHEET_ID || '').trim()
 const SHEET_NAME = (process.env.SHEET_NAME || 'Submissions').trim()
+const COOKIE_SAMESITE_RAW = (process.env.SESSION_COOKIE_SAMESITE || 'lax').trim().toLowerCase()
+const COOKIE_SECURE_RAW = (process.env.SESSION_COOKIE_SECURE || '').trim().toLowerCase()
 
 const SESSION_COOKIE = 'gdg_form_session'
 const SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
+const ALLOWED_ORIGINS = CLIENT_ORIGIN
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean)
+
+const COOKIE_SAMESITE = ['strict', 'lax', 'none'].includes(COOKIE_SAMESITE_RAW)
+  ? COOKIE_SAMESITE_RAW
+  : 'lax'
+
+const COOKIE_SECURE =
+  COOKIE_SECURE_RAW === 'true'
+    ? true
+    : COOKIE_SECURE_RAW === 'false'
+      ? false
+      : process.env.NODE_ENV === 'production'
+
+function corsOrigin(origin, callback) {
+  // Allow server-to-server requests and same-origin browser requests without Origin header.
+  if (!origin) return callback(null, true)
+  if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true)
+  return callback(new Error('Origin not allowed by CORS'))
+}
 
 function assertEnv() {
   const missing = []
@@ -150,7 +174,7 @@ function createApp() {
   )
   app.use(
     cors({
-      origin: CLIENT_ORIGIN,
+      origin: corsOrigin,
       credentials: true,
     }),
   )
@@ -185,10 +209,10 @@ function createApp() {
       return res.status(401).json({ error: 'Invalid access key' })
     }
     const token = signSession()
-    const secure = process.env.NODE_ENV === 'production'
+    const secure = COOKIE_SAMESITE === 'none' ? true : COOKIE_SECURE
     res.cookie(SESSION_COOKIE, token, {
       httpOnly: true,
-      sameSite: 'lax',
+      sameSite: COOKIE_SAMESITE,
       secure,
       maxAge: SESSION_MAX_AGE_MS,
       path: '/',
@@ -197,7 +221,12 @@ function createApp() {
   })
 
   app.post('/api/auth/logout', (_req, res) => {
-    res.clearCookie(SESSION_COOKIE, { path: '/' })
+    const secure = COOKIE_SAMESITE === 'none' ? true : COOKIE_SECURE
+    res.clearCookie(SESSION_COOKIE, {
+      path: '/',
+      sameSite: COOKIE_SAMESITE,
+      secure,
+    })
     res.json({ ok: true })
   })
 
@@ -269,5 +298,6 @@ const app = createApp()
 app.listen(PORT, () => {
   console.log(`API listening on http://localhost:${PORT}`)
   console.log(`Loaded env from ${path.join(serverRoot, '.env')}`)
-  console.log(`CORS origin: ${CLIENT_ORIGIN}`)
+  console.log(`CORS origins: ${ALLOWED_ORIGINS.join(', ') || '(none)'}`)
+  console.log(`Session cookie: sameSite=${COOKIE_SAMESITE}, secure=${COOKIE_SAMESITE === 'none' ? true : COOKIE_SECURE}`)
 })
