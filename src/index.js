@@ -75,7 +75,7 @@ const SESSION_COOKIE = 'gdg_form_session'
 const SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
 const ALLOWED_ORIGINS = CLIENT_ORIGIN
   .split(',')
-  .map((s) => s.trim())
+  .map((s) => s.trim().replace(/\/$/, ''))
   .filter(Boolean)
 
 const COOKIE_SAMESITE = ['strict', 'lax', 'none'].includes(COOKIE_SAMESITE_RAW)
@@ -145,20 +145,27 @@ function signSession() {
   return jwt.sign({ v: 1 }, SESSION_SECRET, { expiresIn: SESSION_MAX_AGE_MS / 1000 })
 }
 
+function readBearerToken(req) {
+  const auth = req.headers?.authorization
+  if (!auth || typeof auth !== 'string') return null
+  const m = auth.match(/^Bearer\s+(.+)$/i)
+  return m ? m[1].trim() : null
+}
+
 function readSession(req) {
-  const token = req.cookies?.[SESSION_COOKIE]
-  if (!token) return null
+  const token = readBearerToken(req) || req.cookies?.[SESSION_COOKIE]
+  if (!token) return { session: null, reason: 'missing-token' }
   try {
-    return jwt.verify(token, SESSION_SECRET)
-  } catch {
-    return null
+    return { session: jwt.verify(token, SESSION_SECRET), reason: null }
+  } catch (err) {
+    return { session: null, reason: err?.name || 'invalid-token' }
   }
 }
 
 function requireSession(req, res, next) {
-  const session = readSession(req)
+  const { session, reason } = readSession(req)
   if (!session) {
-    return res.status(401).json({ error: 'Unauthorized' })
+    return res.status(401).json({ error: 'Unauthorized', reason })
   }
   next()
 }
@@ -217,7 +224,7 @@ function createApp() {
       maxAge: SESSION_MAX_AGE_MS,
       path: '/',
     })
-    return res.json({ ok: true })
+    return res.json({ ok: true, sessionToken: token })
   })
 
   app.post('/api/auth/logout', (_req, res) => {
@@ -231,8 +238,8 @@ function createApp() {
   })
 
   app.get('/api/auth/me', (req, res) => {
-    const session = readSession(req)
-    res.json({ authenticated: Boolean(session) })
+    const { session, reason } = readSession(req)
+    res.json({ authenticated: Boolean(session), reason: session ? null : reason })
   })
 
   app.use('/api', apiLimiter)
